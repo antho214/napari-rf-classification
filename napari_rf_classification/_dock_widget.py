@@ -1,31 +1,38 @@
 import time
 import warnings
+import pickle
+import requests
+import os
 
-import apoc
+# import apoc
 from qtpy.QtWidgets import QSpacerItem, QSizePolicy
 from napari_plugin_engine import napari_hook_implementation
-from qtpy.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSpinBox, QCheckBox
+from qtpy.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSpinBox, QCheckBox, QLineEdit
 from qtpy.QtWidgets import QTableWidget, QTableWidgetItem, QWidget, QGridLayout, QPushButton, QFileDialog
 from qtpy.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView, QTabWidget, QComboBox, QPlainTextEdit
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QBrush, QColor, QFont
 from magicgui.widgets import Table
 from napari._qt.qthreading import thread_worker
+from napari.utils.notifications import show_info, show_warning
 from qtpy.QtCore import QTimer, QRect
 from magicgui.widgets import FileEdit
 from magicgui.types import FileDialogMode
 from superqt import QCollapsible
 
-import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+import numpy
 import napari
 
-from apoc import PredefinedFeatureSet, ObjectSegmenter, PixelClassifier, ProbabilityMapper
+# from apoc import PredefinedFeatureSet, RandomForestClassifier, PixelClassifier, ProbabilityMapper
 from napari_tools_menu import register_dock_widget
-from ._surface_vertex_classifier import SurfaceVertexClassifierWidget
+from ._api import send_request, process_request
+from ._utilities import save_model, load_model
+# from ._surface_vertex_classifier import SurfaceVertexClassifierWidget
 
-@register_dock_widget(menu="Segmentation / labeling > Object segmentation (APOC)")
+@register_dock_widget(menu="Segmentation / labeling > Object segmentation")
 class ObjectSegmentation(QWidget):
-    def __init__(self, napari_viewer, classifier_class=ObjectSegmenter):
+    def __init__(self, napari_viewer, classifier_class=RandomForestClassifier):
         super().__init__()
         self.viewer = napari_viewer
         napari_viewer.layers.selection.events.changed.connect(self._on_selection)
@@ -35,6 +42,50 @@ class ObjectSegmentation(QWidget):
         self.current_annotation = None
 
         self.setLayout(QVBoxLayout())
+
+        # ----------------------------------------------------------
+        # Server setup
+        tabs = QTabWidget()
+
+        server_widget = QWidget()
+        server_widget.setLayout(QVBoxLayout())
+
+        widget = QWidget()
+        widget.setLayout(QHBoxLayout())
+        self.server_address = QLineEdit()
+        self.server_address.setText("http://172.16.1.169")
+        self.server_address.setPlaceholderText("Server address")
+        self.server_address.setToolTip("Please provide the address of the server that should be used for training the classifier.")
+        widget.layout().addWidget(QLabel("Server address:"))
+        widget.layout().addWidget(self.server_address)
+        server_widget.layout().addWidget(widget)
+
+        widget = QWidget()
+        widget.setLayout(QHBoxLayout())
+        self.server_port = QLineEdit()
+        self.server_port.setText("5090")
+        self.server_port.setPlaceholderText("Server port")
+        self.server_port.setToolTip("Please provide the port of the server that should be used for training the classifier.")
+        widget.layout().addWidget(QLabel("Server port:"))
+        widget.layout().addWidget(self.server_port)
+        server_widget.layout().addWidget(widget)
+
+        button = QPushButton("Test connection")
+        def test_connection(*arg, **kwargs):
+            response = send_request(self.get_server_configuration(), {"test_connection" : True})
+            if response is None:
+                warnings.warn("Could not connect to server")
+                return
+            if process_request(response).get("status", "failed") == "ok":
+                show_info("Connection successful")
+            else:
+                show_warning("Connection failed")
+        button.clicked.connect(test_connection)
+        server_widget.layout().addWidget(button)
+
+        tabs.addTab(server_widget, "Server setup")
+        set_border(server_widget)
+        self.layout().addWidget(tabs)
 
         # ----------------------------------------------------------
         # Image selection list
@@ -54,8 +105,8 @@ class ObjectSegmentation(QWidget):
         self.layout().addWidget(QLabel("Classifier file"))
         filename_edit = FileEdit(
             mode=FileDialogMode.OPTIONAL_FILE,
-            filter='*.cl',
-            value=str(self.classifier_class.__name__) + ".cl")
+            filter='*.pkl',
+            value=str(self.classifier_class.__name__) + ".pkl")
         self.layout().addWidget(filename_edit.native)
 
         # ----------------------------------------------------------
@@ -64,12 +115,12 @@ class ObjectSegmentation(QWidget):
         training_widget.setLayout(QVBoxLayout())
 
         # Annotation
-        if self.classifier_class == ObjectSegmenter:
-            suffix = " + object class"
-        elif self.classifier_class == ProbabilityMapper:
-            suffix = " + class for probability output"
-        else:
-            suffix = ""
+        # if self.classifier_class == RandomForestClassifier:
+        #     suffix = " + object class"
+        # elif self.classifier_class == ProbabilityMapper:
+        #     suffix = " + class for probability output"
+        # else:
+        suffix = ""
         training_widget.layout().addWidget(QLabel("Select ground truth annotation" + suffix))
         self.label_list = QComboBox()
         self.label_list.setToolTip("Please provide a labels layer with an annotation to guide the Random Forest training. This labels layer must have the same size as the images selected above.")
@@ -86,25 +137,25 @@ class ObjectSegmentation(QWidget):
         num_object_annotation_spinner.setMaximumWidth(40)
         num_object_annotation_spinner.setMinimum(1)
         num_object_annotation_spinner.setValue(2)
-        if self.classifier_class == ObjectSegmenter:
-            temp.layout().addWidget(num_object_annotation_spinner)
-        elif self.classifier_class == ProbabilityMapper:
-            temp.layout().addWidget(num_object_annotation_spinner)
+        # if self.classifier_class == RandomForestClassifier:
+        #     temp.layout().addWidget(num_object_annotation_spinner)
+        # elif self.classifier_class == ProbabilityMapper:
+        #     temp.layout().addWidget(num_object_annotation_spinner)
         set_border(num_object_annotation_spinner)
         training_widget.layout().addWidget(temp)
         set_border(temp)
 
-        # Features
-        collabsible = QCollapsible("Select features")
-        training_widget.layout().addWidget(collabsible)
+        # # Features
+        # collabsible = QCollapsible("Select features")
+        # training_widget.layout().addWidget(collabsible)
 
-        #feature_selection_button = QPushButton("Select features")
-        #training_widget.layout().addWidget(feature_selection_button)
+        # #feature_selection_button = QPushButton("Select features")
+        # #training_widget.layout().addWidget(feature_selection_button)
 
-        self.feature_selector = FeatureSelector(self, PredefinedFeatureSet.v070.value)
-        collabsible.addWidget(self.feature_selector)
-        collabsible.setDuration(0)
-        set_border(collabsible)
+        # self.feature_selector = FeatureSelector(self, PredefinedFeatureSet.v070.value)
+        # collabsible.addWidget(self.feature_selector)
+        # collabsible.setDuration(0)
+        # set_border(collabsible)
         #training_widget.layout().addWidget(self.feature_selector)
         #@feature_selection_button.clicked.connect
         #def toggle_feature_selector_visibility():
@@ -162,7 +213,6 @@ class ObjectSegmentation(QWidget):
                 self.get_selected_images_data(),
                 self.get_selected_annotation_data(),
                 num_object_annotation_spinner.value(),
-                self.feature_selector.getFeatures(),
                 num_max_depth_spinner.value(),
                 num_trees_spinner.value(),
                 str(filename_edit.value.absolute()).replace("\\", "/").replace("//", "/"),
@@ -192,7 +242,7 @@ class ObjectSegmentation(QWidget):
             if ", " in image_names:
                 image_names = "[" + image_names + "]"
             text_area.setPlainText("# python code to apply this object segmenter\n"
-                                   "from apoc import " + str(self.classifier_class.__name__) + "\n\n" +
+                                   "from sklearn.ensemble import " + str(self.classifier_class.__name__) + "\n\n" +
                                    "segmenter = " + str(self.classifier_class.__name__) + "(opencl_filename='" + filename + "')\n\n" +
                                    "result = segmenter.predict(image=" + image_names + ")")
 
@@ -246,7 +296,6 @@ class ObjectSegmentation(QWidget):
               images,
               annotation,
               object_annotation_value,
-              feature_definition,
               num_max_depth,
               num_trees,
               filename,
@@ -256,7 +305,6 @@ class ObjectSegmentation(QWidget):
         print("train " + str(self.classifier_class.__name__))
         print("num images", len(images))
         print("object annotation value", object_annotation_value)
-        print("features", feature_definition)
         print("depth", num_max_depth)
         print("num trees", num_trees)
         print("file", filename)
@@ -272,36 +320,65 @@ class ObjectSegmentation(QWidget):
         if len(images) == 1:
             images = images[0]
 
-        apoc.erase_classifier(filename)
-        classifier = self.classifier_class(
-            opencl_filename=filename,
-            num_ensembles=num_trees,
-            max_depth=num_max_depth)
+        # Loads the previously trained classifier
+        clf, model_data = None, {}
+        if os.path.exists(filename):
+            clf, model_data = load_model(filename)
+            print("Loaded model from", filename)
+            if clf.n_estimators != num_trees or clf.max_depth != num_max_depth:
+                clf, model_data = None, {}
+                print("Model parameters do not match. Retraining...")
 
-        if self.classifier_class == ObjectSegmenter:
-            classifier.positive_class_identifier = object_annotation_value
-        elif self.classifier_class == ProbabilityMapper:
-            classifier.output_probability_of_class = object_annotation_value
+        response = send_request(
+            self.get_server_configuration(), 
+            {
+                "image" : images,
+                "label" : annotation,
+                "object_annotation_value" : object_annotation_value,
+                "max_depth" : num_max_depth,
+                "n_estimators" : num_trees,
+                "filename" : filename,
+                "model" : clf,
+                "train" : True,
+                **model_data
+            }
+        )
+        if response is None:
+            warnings.warn("Could not connect to server")
+            return
+        processed_response = process_request(response)
+
+        save_model({
+            "model" : processed_response["model"],
+            "X_train" : processed_response["X_train"],
+            "y_train" : processed_response["y_train"],
+            "X_test" : processed_response["X_test"],
+            "y_test" : processed_response["y_test"],
+        }, filename)
+
+        # clf = self.classifier_class(
+        #     n_estimators=num_trees,
+        #     max_depth=num_max_depth)
 
         print("annotation shape", annotation.shape)
 
-        classifier.train(feature_definition, annotation, images)
+        # print(images.shape)
+        # clf.fit(feature_definition, annotation, images)
 
         print("Training done. Applying model...")
 
-        result = np.asarray(classifier.predict(features=feature_definition, image=images))
+        # result = numpy.asarray(classifier.predict(features=feature_definition, image=images))
+        result = processed_response["prediction"]
 
         print("Applying / prediction done.")
 
         short_filename = filename.split("/")[-1]
-        _add_to_viewer(self.viewer, self.classifier_class == ProbabilityMapper, "Result of " + short_filename, result, scale)
+        _add_to_viewer(self.viewer, self.classifier_class != RandomForestClassifier, "Result of " + short_filename, result, scale)
 
-        if show_classifier_statistics and self.viewer is not None:
-            table = QTableWidget()
-            update_model_analysis(table, classifier)
-            self.viewer.window.add_dock_widget(table)
-
-
+        # if show_classifier_statistics and self.viewer is not None:
+        #     table = QTableWidget()
+        #     update_model_analysis(table, classifier)
+        #     self.viewer.window.add_dock_widget(table)
 
     def predict(self, images, filename, scale=None):
         print("predict")
@@ -316,19 +393,32 @@ class ObjectSegmentation(QWidget):
         if len(images) == 1:
             images = images[0]
 
-        clf = self.classifier_class(opencl_filename=filename)
+        # Loads the previously trained classifier
+        clf, model_data = load_model(filename)
 
-        result = np.asarray(clf.predict(image=images))
+        response = send_request(
+            self.get_server_configuration(), 
+            {
+                "image" : images,
+                "filename" : filename,
+                "model" : clf,
+                "train" : False,
+                **model_data
+            }
+        )
+        processed_response = process_request(response)
+        result = processed_response["prediction"]
 
         print("Applying / prediction done.")
 
         short_filename = filename.split("/")[-1]
 
-        _add_to_viewer(self.viewer, self.classifier_class == ProbabilityMapper, "Result of " + short_filename, result, scale)
+        _add_to_viewer(self.viewer, self.classifier_class != RandomForestClassifier, "Result of " + short_filename, result, scale)
 
     def update_memory_consumption(self):
-        number_of_pixels = np.sum(tuple([np.prod(i.shape) for i in self.get_selected_images_data()]), dtype=float)
-        number_of_features = len(self.feature_selector.getFeatures().split(" "))
+        number_of_pixels = numpy.sum(tuple([numpy.prod(i.shape) for i in self.get_selected_images_data()]), dtype=float)
+        # number_of_features = len(self.feature_selector.getFeatures().split(" "))
+        number_of_features = 1
         number_of_bytes_per_pixel = 4
 
         bytes = number_of_pixels * number_of_bytes_per_pixel * number_of_features
@@ -360,9 +450,12 @@ class ObjectSegmentation(QWidget):
     def check_image_sizes(self):
         labels = self.get_selected_annotation_data()
         for image in self.get_selected_images_data():
-            if not np.array_equal(image.shape, labels.shape):
+            if not numpy.array_equal(image.shape, labels.shape):
                 return False
         return True
+    
+    def get_server_configuration(self):
+        return ":".join([self.server_address.text(), self.server_port.text()])
 
     def get_selected_annotation(self):
         index = self.label_list.currentIndex()
@@ -451,7 +544,7 @@ def update_table_gui(statistics_table, table, minimum_value=0.0, maximum_value=1
 
         for j, value in enumerate(table.get(column)):
             item = QTableWidgetItem("{:.3f}".format(value))
-            if not np.isnan(value):
+            if not numpy.isnan(value):
                 brush = QBrush()
                 rel_value = (value - minimum_value) / (maximum_value - minimum_value)
                 brush.setColor(QColor(int((1.0 - rel_value) * 255), int(rel_value * 255), int((1.0 - rel_value) * 255), 255 ))
@@ -546,11 +639,12 @@ class FeatureSelector(QWidget):
 @napari_hook_implementation
 def napari_experimental_provide_dock_widget():
     # you can return either a single widget, or a sequence of widgets
-    from ._function import Train_object_classifier
-    from ._object_classification_widget import ObjectClassification
-    from ._custom_table_row_classifier import CustomObjectClassifierWidget
-    from ._object_merger import Train_object_merger
-    return [ObjectSegmentation, SemanticSegmentation, CustomObjectClassifierWidget, Train_object_merger, ObjectClassification]
+    # from ._function import Train_object_classifier
+    # from ._object_classification_widget import ObjectClassification
+    # from ._custom_table_row_classifier import CustomObjectClassifierWidget
+    # from ._object_merger import Train_object_merger
+    # return [ObjectSegmentation, SemanticSegmentation, CustomObjectClassifierWidget, Train_object_merger, ObjectClassification]
+    return [ObjectSegmentation]
 
 
 def set_border(widget:QWidget, spacing=2, margin=0):

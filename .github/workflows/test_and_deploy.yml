@@ -27,11 +27,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: recursive
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:
-          submodules: recursive
           python-version: ${{ matrix.python-version }}
 
       # these libraries, along with pytest-xvfb (added in the `deps` in tox.ini),

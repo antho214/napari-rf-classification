@@ -1,6 +1,6 @@
 import warnings
 
-from apoc import PredefinedFeatureSet, PixelClassifier, ObjectSegmenter, ObjectClassifier, ObjectSelector, ProbabilityMapper
+# from apoc import PredefinedFeatureSet, PixelClassifier, ObjectSegmenter, ObjectClassifier, ObjectSelector, ProbabilityMapper
 
 import numpy as np
 from napari_plugin_engine import napari_hook_implementation
@@ -9,7 +9,7 @@ import napari
 from napari_time_slicer import time_slicer
 from napari_tools_menu import register_function, register_dock_widget
 from magicgui import magic_factory
-from ._object_merger import Train_object_merger, Apply_object_merger
+# from ._object_merger import Train_object_merger, Apply_object_merger
 from ._utilities import wrap_api
 
 from qtpy.QtWidgets import QTableWidget
@@ -19,16 +19,17 @@ def napari_experimental_provide_function():
     return [
         Train_object_segmentation,
         Apply_object_segmentation,
-        Train_probability_mapper,
-        Apply_probability_mapper,
-        Train_object_segmentation_from_visible_image_layers,
-        Apply_object_segmentation_to_visible_image_layers,
-        Train_pixel_classifier,
-        Apply_pixel_classification,
-        Train_pixel_classifier_from_visible_image_layers,
-        Apply_pixel_classification_to_visible_image_layers,
-        Connected_component_labeling, Apply_object_classification,
-        Apply_object_merger]
+        # Train_probability_mapper,
+        # Apply_probability_mapper,
+        # Train_object_segmentation_from_visible_image_layers,
+        # Apply_object_segmentation_to_visible_image_layers,
+        # Train_pixel_classifier,
+        # Apply_pixel_classification,
+        # Train_pixel_classifier_from_visible_image_layers,
+        # Apply_pixel_classification_to_visible_image_layers,
+        # Connected_component_labeling, Apply_object_classification,
+        # Apply_object_merger
+        ]
 
 
 
@@ -38,7 +39,7 @@ def Train_pixel_classifier(
         image: "napari.types.ImageData",
         annotation : "napari.types.LabelsData",
         model_filename : str = "PixelClassifier.cl",
-        featureset : PredefinedFeatureSet = PredefinedFeatureSet.small_quick,
+        featureset : str = None,
         custom_features : str = "original gaussian_blur=1 sobel_of_gaussian_blur=1",
         max_depth : int = 2,
         num_ensembles : int = 100
@@ -57,7 +58,7 @@ def Train_probability_mapper(
         image: "napari.types.ImageData",
         annotation : "napari.types.LabelsData",
         model_filename : str = "ProbabilityMapper.cl",
-        featureset : PredefinedFeatureSet = PredefinedFeatureSet.small_quick,
+        featureset : str = None,
         custom_features : str = "original gaussian_blur=1 sobel_of_gaussian_blur=1",
         output_probability_of_class : int = 2,
         max_depth : int = 2,
@@ -94,7 +95,7 @@ def apply_pixel_classification(image: "napari.types.ImageData",
 def Train_pixel_classifier_from_visible_image_layers(
         annotation : "napari.types.LabelsData",
         model_filename : str = "PixelClassifier.cl",
-        featureset : PredefinedFeatureSet = PredefinedFeatureSet.small_quick,
+        featureset : str = None,
         custom_features : str = "original gaussian_blur=1 sobel_of_gaussian_blur=1",
         max_depth : int = 2,
         num_ensembles : int = 100,
@@ -126,7 +127,7 @@ def Train_object_segmentation(
         image: "napari.types.ImageData",
         annotation : "napari.types.LabelsData",
         model_filename : str = "ObjectSegmenter.cl",
-        featureset : PredefinedFeatureSet = PredefinedFeatureSet.small_quick,
+        featureset : str = None,
         custom_features : str = "original gaussian_blur=1 sobel_of_gaussian_blur=1",
         max_depth : int = 2,
         num_ensembles : int = 100,
@@ -181,7 +182,7 @@ def apply_object_segmentation(image: "napari.types.ImageData",
 def Train_object_segmentation_from_visible_image_layers(
         annotation : "napari.types.LabelsData",
         model_filename : str = "ObjectSegmenter.cl",
-        featureset : PredefinedFeatureSet = PredefinedFeatureSet.small_quick,
+        featureset : str = None,
         custom_features : str = "original gaussian_blur=1 sobel_of_gaussian_blur=1",
         max_depth : int = 2,
         num_ensembles : int = 100,

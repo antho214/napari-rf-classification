@@ -114,6 +114,12 @@ class ObjectSegmentation(QWidget):
         training_widget = QWidget()
         training_widget.setLayout(QVBoxLayout())
 
+        training_warmstart_checkbox = QCheckBox("Warm start")
+        training_warmstart_checkbox.setChecked(False)
+        training_warmstart_checkbox.setToolTip("If checked, the classifier will be trained with the data that is stored in the classifier file. This can be useful to continue training a classifier.")
+
+        training_widget.layout().addWidget(training_warmstart_checkbox)        
+
         # Annotation
         # if self.classifier_class == RandomForestClassifier:
         #     suffix = " + object class"
@@ -217,6 +223,7 @@ class ObjectSegmentation(QWidget):
                 num_trees_spinner.value(),
                 str(filename_edit.value.absolute()).replace("\\", "/").replace("//", "/"),
                 show_classifier_statistics_checkbox.isChecked(),
+                training_warmstart_checkbox.isChecked(),
                 first_image_layer.scale
             )
         button.clicked.connect(train_clicked)
@@ -300,6 +307,7 @@ class ObjectSegmentation(QWidget):
               num_trees,
               filename,
               show_classifier_statistics,
+              warm_start,
               scale=None,
     ):
         print("train " + str(self.classifier_class.__name__))
@@ -340,6 +348,7 @@ class ObjectSegmentation(QWidget):
                 "filename" : filename,
                 "model" : clf,
                 "train" : True,
+                "warm_start" : warm_start,
                 **model_data
             }
         )
@@ -369,6 +378,8 @@ class ObjectSegmentation(QWidget):
 
         # result = numpy.asarray(classifier.predict(features=feature_definition, image=images))
         result = processed_response["prediction"]
+        while result.ndim < images.ndim:
+            result = result[numpy.newaxis, ...]
 
         print("Applying / prediction done.")
 
@@ -661,4 +672,4 @@ def _add_to_viewer(viewer, as_image, name, data, scale=None):
         if as_image:
             viewer.add_image(data, name=name, scale=scale)
         else:
-            viewer.add_labels(data.astype(int), name=name, scale=scale)
+            viewer.add_labels(data.astype(numpy.uint16), name=name, scale=scale)
